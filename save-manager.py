@@ -305,6 +305,157 @@ class UndertaleeSaveManager:
         
         print(f"復元完了: {selected_backup['name']} ({copied2} ファイルをゲームに適用)")
     
+    def delete_backup(self):
+        """バックアップを削除"""
+        print("\n=== バックアップ削除 ===")
+        
+        # バックアップ一覧を取得
+        backups = self.get_backup_list()
+        if not backups:
+            print("削除可能なバックアップがありません")
+            return
+        
+        # バックアップ一覧を表示
+        print("削除可能なバックアップ:")
+        for i, backup in enumerate(backups, 1):
+            modified_time = datetime.fromtimestamp(backup['modified']).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"  {i:2d}. {backup['name']} ({modified_time})")
+        
+        # 複数選択または単体選択
+        print("\n削除方法を選択してください:")
+        print("  a. 複数選択で削除")
+        print("  s. 単体選択で削除")
+        print("  0. キャンセル")
+        
+        mode = input("\n選択してください (a/s/0): ").strip().lower()
+        
+        if mode == "0":
+            print("削除をキャンセルしました")
+            return
+        elif mode == "a":
+            self._delete_multiple_backups(backups)
+        elif mode == "s":
+            self._delete_single_backup(backups)
+        else:
+            print("無効な選択です")
+    
+    def _delete_single_backup(self, backups):
+        """単体バックアップの削除"""
+        # ユーザーに選択させる
+        while True:
+            try:
+                choice = input(f"\n削除するバックアップ番号を入力してください (1-{len(backups)}, 0でキャンセル): ").strip()
+                if choice == "0":
+                    print("削除をキャンセルしました")
+                    return
+                
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(backups):
+                    selected_backup = backups[choice_num - 1]
+                    break
+                else:
+                    print(f"1から{len(backups)}の間で入力してください")
+            except ValueError:
+                print("数値を入力してください")
+        
+        # 最終確認
+        print(f"\n'{selected_backup['name']}' を削除します")
+        confirm = input("この操作は取り消せません。続行しますか？ (y/n): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("削除をキャンセルしました")
+            return
+        
+        # 削除実行
+        try:
+            shutil.rmtree(selected_backup['path'])
+            print(f"削除完了: {selected_backup['name']}")
+        except OSError as e:
+            print(f"削除エラー: {e}")
+    
+    def _delete_multiple_backups(self, backups):
+        """複数バックアップの削除"""
+        print("\n削除したいバックアップの番号を入力してください")
+        print("例: 1,3,5 または 1-3,5 または all")
+        
+        selection = input("選択: ").strip().lower()
+        
+        if selection == "all":
+            # 全削除の確認
+            print(f"\n全ての{len(backups)}個のバックアップを削除します")
+            confirm = input("この操作は取り消せません。続行しますか？ (y/n): ").strip().lower()
+            if confirm not in ['y', 'yes']:
+                print("削除をキャンセルしました")
+                return
+            
+            # 全削除実行
+            deleted_count = 0
+            for backup in backups:
+                try:
+                    shutil.rmtree(backup['path'])
+                    print(f"削除: {backup['name']}")
+                    deleted_count += 1
+                except OSError as e:
+                    print(f"削除エラー ({backup['name']}): {e}")
+            
+            print(f"削除完了: {deleted_count}個のバックアップを削除しました")
+            return
+        
+        # 個別選択の解析
+        selected_indices = self._parse_selection(selection, len(backups))
+        if not selected_indices:
+            print("無効な選択です")
+            return
+        
+        # 選択されたバックアップを表示
+        print("\n削除対象:")
+        selected_backups = [backups[i] for i in selected_indices]
+        for backup in selected_backups:
+            print(f"  - {backup['name']}")
+        
+        # 最終確認
+        confirm = input(f"\n{len(selected_backups)}個のバックアップを削除します。続行しますか？ (y/n): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("削除をキャンセルしました")
+            return
+        
+        # 削除実行
+        deleted_count = 0
+        for backup in selected_backups:
+            try:
+                shutil.rmtree(backup['path'])
+                print(f"削除: {backup['name']}")
+                deleted_count += 1
+            except OSError as e:
+                print(f"削除エラー ({backup['name']}): {e}")
+        
+        print(f"削除完了: {deleted_count}個のバックアップを削除しました")
+    
+    def _parse_selection(self, selection, max_num):
+        """選択文字列を解析してインデックスリストを返す"""
+        indices = set()
+        
+        try:
+            # カンマで分割
+            parts = selection.split(',')
+            for part in parts:
+                part = part.strip()
+                if '-' in part:
+                    # 範囲指定 (例: 1-3)
+                    start, end = part.split('-', 1)
+                    start_idx = int(start.strip()) - 1
+                    end_idx = int(end.strip()) - 1
+                    if 0 <= start_idx < max_num and 0 <= end_idx < max_num and start_idx <= end_idx:
+                        indices.update(range(start_idx, end_idx + 1))
+                else:
+                    # 単一指定
+                    idx = int(part) - 1
+                    if 0 <= idx < max_num:
+                        indices.add(idx)
+        except ValueError:
+            return []
+        
+        return sorted(list(indices))
+    
     def init_setup(self):
         """初期化処理のメイン関数"""
         print("=== UNDERTALE セーブデータ管理ツール - 初期化 ===")
@@ -373,11 +524,12 @@ class UndertaleeSaveManager:
             print("1. 💾 バックアップを作成")
             print("2. 🔄 バックアップから復元")
             print("3. 📁 セーブ一覧を表示")
+            print("4. 🗑️  バックアップを削除")
             print("0. 終了")
             
             # ユーザー入力
             try:
-                choice = input("\n選択してください [0-3]: ").strip()
+                choice = input("\n選択してください [0-4]: ").strip()
             except KeyboardInterrupt:
                 print("\n\n終了します")
                 break
@@ -393,8 +545,10 @@ class UndertaleeSaveManager:
             elif choice == "3":
                 # 既に自動表示されているので、何もしない（次のループで再表示）
                 continue
+            elif choice == "4":
+                self.delete_backup()
             else:
-                print("無効な選択です。0-3で入力してください")
+                print("無効な選択です。0-4で入力してください")
 
 def main():
     """メイン関数"""
