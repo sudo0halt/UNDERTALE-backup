@@ -1,6 +1,14 @@
 #!/usr/bin/env python3
 """
-UNDERTALE セーブデータ管理ツール
+UNDERTALE Save Data Manager
+Copyright (C) 2025 sudo0halt
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+UNDERTALE is a trademark of Toby Fox.
 
 セーブデータのバックアップ・復元・管理を行うツール
 """
