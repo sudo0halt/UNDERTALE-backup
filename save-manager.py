@@ -11,6 +11,7 @@ import json
 import shutil
 import argparse
 from pathlib import Path
+from datetime import datetime
 
 class UndertaleeSaveManager:
     def __init__(self):
@@ -115,44 +116,194 @@ class UndertaleeSaveManager:
                 if retry not in ['y', 'yes']:
                     return None
     
-    def clear_current_saves(self):
-        """現在のセーブディレクトリをクリア"""
-        print("現在のセーブディレクトリをクリアしています...")
-        
-        if self.current_save_dir.exists():
-            # ディレクトリ内のファイルを削除
-            for file_path in self.current_save_dir.glob("*"):
+    def clear_directory(self, directory):
+        """指定されたディレクトリ内のファイルをクリア"""
+        if directory.exists():
+            for file_path in directory.glob("*"):
                 if file_path.is_file():
                     file_path.unlink()
-                    print(f"削除: {file_path.name}")
         else:
-            # ディレクトリが存在しない場合は作成
-            self.current_save_dir.mkdir(parents=True)
-        
-        print("クリア完了")
+            directory.mkdir(parents=True)
     
-    def copy_save_files(self, source_path):
-        """セーブファイルをsaves/current/にコピー"""
-        print(f"\nセーブファイルを {source_path} からコピーしています...")
-        
+    def copy_save_files(self, source_path, destination_path, description=""):
+        """セーブファイルをコピー"""
         source_dir = Path(source_path)
+        dest_dir = Path(destination_path)
+        
+        # 宛先ディレクトリを作成
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        
         copied_count = 0
         
         for filename in self.save_files:
             source_file = source_dir / filename
             if source_file.exists():
-                destination = self.current_save_dir / filename
+                destination_file = dest_dir / filename
                 try:
-                    shutil.copy2(source_file, destination)
-                    print(f"コピー: {filename}")
+                    shutil.copy2(source_file, destination_file)
+                    if description:
+                        print(f"コピー: {filename} {description}")
                     copied_count += 1
                 except IOError as e:
                     print(f"コピーエラー ({filename}): {e}")
-            else:
-                print(f"スキップ: {filename} (ファイルが見つかりません)")
         
-        print(f"\n{copied_count} ファイルをコピーしました")
-        return copied_count > 0
+        return copied_count
+    
+    def get_backup_list(self):
+        """バックアップの一覧を取得（日時順でソート）"""
+        if not self.backups_dir.exists():
+            return []
+        
+        backups = []
+        for backup_dir in self.backups_dir.iterdir():
+            if backup_dir.is_dir():
+                # ディレクトリ内にセーブファイルがあるかチェック
+                has_saves = any((backup_dir / filename).exists() for filename in self.save_files)
+                if has_saves:
+                    backups.append({
+                        'name': backup_dir.name,
+                        'path': backup_dir,
+                        'modified': backup_dir.stat().st_mtime
+                    })
+        
+        # 更新日時順でソート（新しい順）
+        backups.sort(key=lambda x: x['modified'], reverse=True)
+        return backups
+    
+    def display_save_list(self):
+        """セーブ一覧を表示"""
+        print("\n=== セーブデータ一覧 ===")
+        
+        # 現在のセーブ確認
+        current_files = []
+        if self.current_save_dir.exists():
+            for filename in self.save_files:
+                if (self.current_save_dir / filename).exists():
+                    current_files.append(filename)
+        
+        print(f"現在のセーブ: {len(current_files)} ファイル")
+        if current_files:
+            print(f"  ファイル: {', '.join(current_files)}")
+        
+        # バックアップ一覧
+        backups = self.get_backup_list()
+        print(f"\nバックアップ: {len(backups)} 個")
+        
+        if backups:
+            for i, backup in enumerate(backups, 1):
+                # 日時を読みやすい形式に変換
+                modified_time = datetime.fromtimestamp(backup['modified']).strftime('%Y-%m-%d %H:%M:%S')
+                print(f"  {i:2d}. {backup['name']} ({modified_time})")
+        else:
+            print("  バックアップはありません")
+    
+    def create_backup(self):
+        """バックアップを作成"""
+        print("\n=== バックアップ作成 ===")
+        
+        config = self.load_config()
+        game_path = config.get('game_path')
+        if not game_path:
+            print("ゲームパスが設定されていません")
+            return
+        
+        # ステップ1: ゲームフォルダ → saves/current/
+        print("ステップ1: ゲームフォルダから最新セーブを取得...")
+        self.clear_directory(self.current_save_dir)
+        copied = self.copy_save_files(game_path, self.current_save_dir)
+        
+        if copied == 0:
+            print("ゲームフォルダにセーブファイルが見つかりません")
+            return
+        
+        print(f"{copied} ファイルを取得しました")
+        
+        # ステップ2: バックアップ名を決定
+        while True:
+            backup_name = input("\nバックアップ名を入力してください (空欄で自動生成): ").strip()
+            if not backup_name:
+                # 自動生成: 日時ベース
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_name = f"backup_{timestamp}"
+                break
+            
+            # バックアップ名の重複チェック
+            backup_path = self.backups_dir / backup_name
+            if backup_path.exists():
+                print(f"'{backup_name}' は既に存在します")
+                overwrite = input("上書きしますか？ (y/n): ").strip().lower()
+                if overwrite in ['y', 'yes']:
+                    break
+            else:
+                break
+        
+        # ステップ3: saves/current/ → saves/backups/[名前]
+        print(f"ステップ2: '{backup_name}' として保存...")
+        backup_path = self.backups_dir / backup_name
+        
+        # 既存のバックアップディレクトリを削除（上書きの場合）
+        if backup_path.exists():
+            shutil.rmtree(backup_path)
+        
+        copied = self.copy_save_files(self.current_save_dir, backup_path)
+        print(f"バックアップ作成完了: {backup_name} ({copied} ファイル)")
+    
+    def restore_backup(self):
+        """バックアップから復元"""
+        print("\n=== バックアップから復元 ===")
+        
+        # バックアップ一覧を取得
+        backups = self.get_backup_list()
+        if not backups:
+            print("復元可能なバックアップがありません")
+            return
+        
+        # バックアップ一覧を表示
+        print("復元可能なバックアップ:")
+        for i, backup in enumerate(backups, 1):
+            modified_time = datetime.fromtimestamp(backup['modified']).strftime('%Y-%m-%d %H:%M:%S')
+            print(f"  {i:2d}. {backup['name']} ({modified_time})")
+        
+        # ユーザーに選択させる
+        while True:
+            try:
+                choice = input(f"\n復元するバックアップ番号を入力してください (1-{len(backups)}, 0でキャンセル): ").strip()
+                if choice == "0":
+                    print("復元をキャンセルしました")
+                    return
+                
+                choice_num = int(choice)
+                if 1 <= choice_num <= len(backups):
+                    selected_backup = backups[choice_num - 1]
+                    break
+                else:
+                    print(f"1から{len(backups)}の間で入力してください")
+            except ValueError:
+                print("数値を入力してください")
+        
+        # 確認
+        print(f"\n'{selected_backup['name']}' を復元します")
+        confirm = input("現在のセーブデータとゲーム内データが上書きされます。続行しますか？ (y/n): ").strip().lower()
+        if confirm not in ['y', 'yes']:
+            print("復元をキャンセルしました")
+            return
+        
+        config = self.load_config()
+        game_path = config.get('game_path')
+        if not game_path:
+            print("ゲームパスが設定されていません")
+            return
+        
+        # ステップ1: バックアップ → saves/current/
+        print("ステップ1: バックアップをcurrentに復元...")
+        self.clear_directory(self.current_save_dir)
+        copied1 = self.copy_save_files(selected_backup['path'], self.current_save_dir)
+        
+        # ステップ2: saves/current/ → ゲームフォルダ
+        print("ステップ2: ゲームフォルダに適用...")
+        copied2 = self.copy_save_files(self.current_save_dir, game_path)
+        
+        print(f"復元完了: {selected_backup['name']} ({copied2} ファイルをゲームに適用)")
     
     def init_setup(self):
         """初期化処理のメイン関数"""
@@ -173,12 +324,18 @@ class UndertaleeSaveManager:
             return False
         
         # 現在のセーブディレクトリをクリア
-        self.clear_current_saves()
+        print("現在のセーブディレクトリをクリアしています...")
+        self.clear_directory(self.current_save_dir)
+        print("クリア完了")
         
         # セーブファイルをコピー
-        if not self.copy_save_files(game_path):
+        print(f"\nセーブファイルを {game_path} からコピーしています...")
+        copied = self.copy_save_files(game_path, self.current_save_dir, "")
+        if copied == 0:
             print("セーブファイルのコピーに失敗しました")
             return False
+        
+        print(f"{copied} ファイルをコピーしました")
         
         # 設定を保存
         config['game_path'] = game_path
@@ -193,7 +350,7 @@ class UndertaleeSaveManager:
         return True
     
     def main_menu(self):
-        """メインメニューの表示（ダミー実装）"""
+        """メインメニューの表示と操作"""
         # 設定の確認
         config = self.load_config()
         if not config.get('initialized', False):
@@ -201,9 +358,43 @@ class UndertaleeSaveManager:
             print("python save-manager.py --init")
             return
         
-        print("=== UNDERTALE セーブデータ管理ツール ===")
-        print(f"ゲームパス: {config.get('game_path', '未設定')}")
-        print("対話メニュー - 開発中!")
+        while True:
+            # メニュー表示
+            print("\n" + "="*50)
+            print("UNDERTALE セーブデータ管理ツール")
+            print(f"ゲームパス: {config.get('game_path', '未設定')}")
+            print("="*50)
+            
+            # セーブ一覧を自動表示
+            self.display_save_list()
+            
+            # メニュー選択肢
+            print("\n=== メニュー ===")
+            print("1. 💾 バックアップを作成")
+            print("2. 🔄 バックアップから復元")
+            print("3. 📁 セーブ一覧を表示")
+            print("0. 終了")
+            
+            # ユーザー入力
+            try:
+                choice = input("\n選択してください [0-3]: ").strip()
+            except KeyboardInterrupt:
+                print("\n\n終了します")
+                break
+            
+            # 選択に応じた処理
+            if choice == "0":
+                print("終了します")
+                break
+            elif choice == "1":
+                self.create_backup()
+            elif choice == "2":
+                self.restore_backup()
+            elif choice == "3":
+                # 既に自動表示されているので、何もしない（次のループで再表示）
+                continue
+            else:
+                print("無効な選択です。0-3で入力してください")
 
 def main():
     """メイン関数"""
